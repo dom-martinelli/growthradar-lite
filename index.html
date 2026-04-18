@@ -284,9 +284,42 @@
     tbody.innerHTML = '';
 
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#666">No height/weight data found.</td></tr>';
-      return;
-    }
+      // sandbox patient has no vitals -- use synthetic pediatric data for demo
+      const synthetic = [
+    { date: '2018-04-10', type: 'Height', value: 95.2,  unit: 'cm' },
+    { date: '2018-04-10', type: 'Weight', value: 14.1,  unit: 'kg' },
+    { date: '2019-06-15', type: 'Height', value: 102.8, unit: 'cm' },
+    { date: '2019-06-15', type: 'Weight', value: 16.3,  unit: 'kg' },
+    { date: '2020-09-01', type: 'Height', value: 110.4, unit: 'cm' },
+    { date: '2020-09-01', type: 'Weight', value: 18.7,  unit: 'kg' },
+    { date: '2021-11-20', type: 'Height', value: 117.9, unit: 'cm' },
+    { date: '2021-11-20', type: 'Weight', value: 21.2,  unit: 'kg' },
+    { date: '2022-12-05', type: 'Height', value: 124.5, unit: 'cm' },
+    { date: '2022-12-05', type: 'Weight', value: 23.8,  unit: 'kg' },
+    { date: '2024-02-14', type: 'Height', value: 131.0, unit: 'cm' },
+    { date: '2024-02-14', type: 'Weight', value: 26.5,  unit: 'kg' },
+  ];
+
+  const note = document.createElement('p');
+  note.style.cssText = 'font-size:0.75rem;color:#555;margin-top:0.5rem';
+  note.textContent = 'No vitals in sandbox record — showing synthetic demo data.';
+  document.getElementById('patient-card').appendChild(note);
+
+  for (const r of synthetic) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value}</td><td>${r.unit}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // build growthData from synthetic for charting
+  window._growthData = {
+    height: synthetic.filter(r => r.type === 'Height').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
+    weight: synthetic.filter(r => r.type === 'Weight').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
+    bmi: [],
+  };
+  console.log('Growth data ready for charting:', window._growthData);
+  return;
+}
 
     for (const obs of rows) {
       const code  = obs.code.coding[0].code;
