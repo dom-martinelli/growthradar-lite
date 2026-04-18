@@ -33,11 +33,7 @@
       cursor: pointer;
     }
     button:hover { background: #5bb890; }
-    #status {
-      margin-top: 1rem;
-      font-size: 0.85rem;
-      color: #888;
-    }
+    #status { margin-top: 1rem; font-size: 0.85rem; color: #888; }
     #debug {
       margin-top: 2rem;
       background: #1a1a1a;
@@ -87,6 +83,26 @@
       height: 350px;
       width: 100%;
     }
+    #flags {
+      margin-top: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .flag-alert {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.4);
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      font-size: 0.82rem;
+      color: #fca5a5;
+    }
+    .flag-alert strong { color: #ef4444; }
+    #standard-note {
+      margin-top: 0.5rem;
+      font-size: 0.72rem;
+      color: #444;
+    }
   </style>
 </head>
 <body>
@@ -106,6 +122,7 @@
         <th>Measurement</th>
         <th>Value</th>
         <th>Unit</th>
+        <th>Percentile</th>
       </tr>
     </thead>
     <tbody id="obs-body"></tbody>
@@ -113,6 +130,8 @@
   <div id="chart-container">
     <canvas id="growth-chart"></canvas>
   </div>
+  <div id="flags"></div>
+  <p id="standard-note"></p>
 </div>
 <div id="debug"></div>
 
@@ -126,8 +145,128 @@
   const AUTH_URL          = EPIC_SANDBOX_BASE + '/authorize';
   const TOKEN_URL         = EPIC_SANDBOX_BASE + '/token';
   const FHIR_BASE         = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
-
   const SCOPES = 'openid fhirUser patient/Patient.read patient/Observation.read';
+
+  // ── WHO height-for-age (boys, 0-24 months): p3, p50, p97 at key months ───
+  // source: WHO Child Growth Standards
+  const WHO_BOYS_HEIGHT = [
+    { months: 0,  p3: 46.1, p50: 49.9, p97: 53.7 },
+    { months: 3,  p3: 57.6, p50: 61.4, p97: 65.3 },
+    { months: 6,  p3: 63.3, p50: 67.6, p97: 71.9 },
+    { months: 9,  p3: 68.0, p50: 72.3, p97: 76.9 },
+    { months: 12, p3: 71.7, p50: 75.7, p97: 81.2 },
+    { months: 18, p3: 77.5, p50: 82.3, p97: 87.7 },
+    { months: 24, p3: 82.5, p50: 87.8, p97: 93.2 },
+  ];
+
+  // ── CDC height-for-age (boys, 2-10 yrs): p3, p50, p97 at key ages ────────
+  // source: CDC 2000 Growth Charts
+  const CDC_BOYS_HEIGHT = [
+    { months: 24,  p3: 82.5,  p50: 87.1,  p97: 92.0  },
+    { months: 30,  p3: 87.4,  p50: 92.9,  p97: 98.4  },
+    { months: 36,  p3: 91.2,  p50: 96.1,  p97: 102.7 },
+    { months: 48,  p3: 97.3,  p50: 103.3, p97: 109.9 },
+    { months: 60,  p3: 103.0, p50: 109.9, p97: 116.4 },
+    { months: 72,  p3: 108.5, p50: 116.0, p97: 123.2 },
+    { months: 84,  p3: 114.0, p50: 121.7, p97: 129.7 },
+    { months: 96,  p3: 119.2, p50: 127.0, p97: 135.7 },
+    { months: 108, p3: 124.0, p50: 132.2, p97: 141.3 },
+    { months: 120, p3: 129.0, p50: 137.5, p97: 147.0 },
+  ];
+
+  // ── Realistic synthetic data: boy born 2020-03-15 ─────────────────────────
+  // Normal early growth, faltering at ~3-4 yrs (drops toward p3), recovers
+  const SYNTHETIC_DOB = '2020-03-15';
+  const SYNTHETIC = [
+    { date: '2020-03-20', type: 'Height', value: 50.2, unit: 'cm' }, // ~birth
+    { date: '2020-03-20', type: 'Weight', value: 3.4,  unit: 'kg' },
+    { date: '2020-06-18', type: 'Height', value: 62.1, unit: 'cm' }, // 3mo ~p25
+    { date: '2020-06-18', type: 'Weight', value: 6.1,  unit: 'kg' },
+    { date: '2020-09-15', type: 'Height', value: 67.8, unit: 'cm' }, // 6mo ~p25
+    { date: '2020-09-15', type: 'Weight', value: 7.8,  unit: 'kg' },
+    { date: '2021-03-15', type: 'Height', value: 75.5, unit: 'cm' }, // 12mo ~p25
+    { date: '2021-03-15', type: 'Weight', value: 9.6,  unit: 'kg' },
+    { date: '2021-09-15', type: 'Height', value: 81.2, unit: 'cm' }, // 18mo ~p25
+    { date: '2021-09-15', type: 'Weight', value: 10.9, unit: 'kg' },
+    { date: '2022-03-15', type: 'Height', value: 86.4, unit: 'cm' }, // 24mo ~p25
+    { date: '2022-03-15', type: 'Weight', value: 12.1, unit: 'kg' },
+    { date: '2022-09-15', type: 'Height', value: 89.1, unit: 'cm' }, // 30mo -- slowing, crossing toward p3
+    { date: '2022-09-15', type: 'Weight', value: 12.8, unit: 'kg' },
+    { date: '2023-03-15', type: 'Height', value: 91.8, unit: 'cm' }, // 36mo ~p3 -- FLAG
+    { date: '2023-03-15', type: 'Weight', value: 13.2, unit: 'kg' },
+    { date: '2023-09-15', type: 'Height', value: 96.2, unit: 'cm' }, // 42mo -- recovering
+    { date: '2023-09-15', type: 'Weight', value: 14.1, unit: 'kg' },
+    { date: '2024-03-15', type: 'Height', value: 102.8, unit: 'cm' }, // 48mo ~p25 -- recovered
+    { date: '2024-03-15', type: 'Weight', value: 15.9, unit: 'kg' },
+    { date: '2024-09-15', type: 'Height', value: 108.1, unit: 'cm' }, // 54mo ~p25
+    { date: '2024-09-15', type: 'Weight', value: 17.2, unit: 'kg' },
+  ];
+
+  // ── Percentile interpolation ───────────────────────────────────────────────
+  function getPercentile(heightCm, ageMonths) {
+    const table = ageMonths <= 24 ? WHO_BOYS_HEIGHT : CDC_BOYS_HEIGHT;
+
+    // find bracketing rows
+    let lo = table[0], hi = table[table.length - 1];
+    for (let i = 0; i < table.length - 1; i++) {
+      if (table[i].months <= ageMonths && table[i+1].months >= ageMonths) {
+        lo = table[i]; hi = table[i+1]; break;
+      }
+    }
+
+    // linear interpolation for p3/p50/p97 at this age
+    const t = lo.months === hi.months ? 0 :
+      (ageMonths - lo.months) / (hi.months - lo.months);
+    const p3  = lo.p3  + t * (hi.p3  - lo.p3);
+    const p50 = lo.p50 + t * (hi.p50 - lo.p50);
+    const p97 = lo.p97 + t * (hi.p97 - lo.p97);
+
+    // estimate percentile using normal approximation between known points
+    if (heightCm <= p3)  return Math.round(3  * (heightCm / p3));
+    if (heightCm >= p97) return 97;
+    if (heightCm <= p50) return Math.round(3  + 47 * (heightCm - p3)  / (p50 - p3));
+    return Math.round(50 + 47 * (heightCm - p50) / (p97 - p50));
+  }
+
+  function monthsBetween(dob, dateStr) {
+    const d1 = new Date(dob), d2 = new Date(dateStr);
+    return (d2.getFullYear() - d1.getFullYear()) * 12 +
+           (d2.getMonth()   - d1.getMonth());
+  }
+
+  // ── Anomaly flagging ───────────────────────────────────────────────────────
+  function detectAnomalies(heightSeries, dob) {
+    const flags = [];
+    const percentiles = heightSeries.map(pt => ({
+      ...pt,
+      ageMonths: monthsBetween(dob, pt.date),
+      percentile: getPercentile(pt.value, monthsBetween(dob, pt.date)),
+    }));
+
+    for (let i = 1; i < percentiles.length; i++) {
+      const prev = percentiles[i - 1];
+      const curr = percentiles[i];
+      const drop = prev.percentile - curr.percentile;
+
+      // flag if percentile drops >20 points between visits
+      if (drop >= 20) {
+        flags.push({
+          date: curr.date,
+          message: `Height dropped from ~${prev.percentile}th to ~${curr.percentile}th percentile between ${prev.date} and ${curr.date}. Consider evaluation for growth faltering.`,
+        });
+      }
+
+      // flag if below p3 at any point
+      if (curr.percentile <= 3) {
+        flags.push({
+          date: curr.date,
+          message: `Height at ${curr.date} (${curr.value} cm) is at or below the 3rd percentile for age ${Math.round(curr.ageMonths/12 * 10)/10} years.`,
+        });
+      }
+    }
+
+    return { flags, percentiles };
+  }
 
   function setStatus(msg) {
     document.getElementById('status').textContent = msg;
@@ -152,227 +291,166 @@
     return { verifier, challenge };
   }
 
-  // ── Step 1: kick off the auth redirect ────────────────────────────────────
   async function startLaunch() {
     setStatus('Generating PKCE and redirecting to Epic...');
     const { verifier, challenge } = await generatePKCE();
     const state = base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
-
     sessionStorage.setItem('pkce_verifier', verifier);
     sessionStorage.setItem('oauth_state',   state);
-
     const params = new URLSearchParams({
-      response_type:         'code',
-      client_id:             CLIENT_ID,
-      redirect_uri:          REDIRECT_URI,
-      scope:                 SCOPES,
-      state,
-      code_challenge:        challenge,
-      code_challenge_method: 'S256',
-      aud:                   FHIR_BASE,
+      response_type: 'code', client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI, scope: SCOPES, state,
+      code_challenge: challenge, code_challenge_method: 'S256', aud: FHIR_BASE,
     });
-
     window.location.href = AUTH_URL + '?' + params.toString();
   }
 
-  // ── Step 2: handle the redirect back ──────────────────────────────────────
   async function handleCallback() {
     const params = new URLSearchParams(window.location.search);
-    const code   = params.get('code');
-    const state  = params.get('state');
-    const error  = params.get('error');
-
-    if (error) {
-      setStatus('Auth error: ' + error + ' — ' + params.get('error_description'));
-      return;
-    }
+    const code = params.get('code'), state = params.get('state'), error = params.get('error');
+    if (error) { setStatus('Auth error: ' + error); return; }
     if (!code) return;
-
-    const savedState = sessionStorage.getItem('oauth_state');
-    if (state !== savedState) {
-      setStatus('State mismatch — possible CSRF. Aborting.');
-      return;
+    if (state !== sessionStorage.getItem('oauth_state')) {
+      setStatus('State mismatch. Aborting.'); return;
     }
-
     const verifier = sessionStorage.getItem('pkce_verifier');
     setStatus('Got auth code. Exchanging for token...');
     window.history.replaceState({}, document.title, REDIRECT_URI);
-
     const body = new URLSearchParams({
-      grant_type:    'authorization_code',
-      code,
-      redirect_uri:  REDIRECT_URI,
-      client_id:     CLIENT_ID,
-      code_verifier: verifier,
+      grant_type: 'authorization_code', code,
+      redirect_uri: REDIRECT_URI, client_id: CLIENT_ID, code_verifier: verifier,
     });
-
     try {
-      const resp  = await fetch(TOKEN_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    body.toString(),
-      });
+      const resp  = await fetch(TOKEN_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
       const token = await resp.json();
-
-      if (token.error) {
-        setStatus('Token error: ' + token.error + ' — ' + token.error_description);
-        showDebug(token);
-        return;
-      }
-
+      if (token.error) { setStatus('Token error: ' + token.error); showDebug(token); return; }
       sessionStorage.setItem('access_token', token.access_token);
       sessionStorage.setItem('patient_id',   token.patient);
-
       showDebug({ granted_scopes: token.scope, patient_id: token.patient });
-
       setStatus('Authenticated. Loading patient data...');
       await loadPatientData(token.access_token, token.patient);
-
-    } catch (err) {
-      setStatus('Network error during token exchange: ' + err.message);
-    }
+    } catch (err) { setStatus('Network error: ' + err.message); }
   }
 
-  // ── Step 3: fetch patient + observations ──────────────────────────────────
   async function loadPatientData(accessToken, patientId) {
-    const headers = {
-      Authorization: 'Bearer ' + accessToken,
-      Accept: 'application/fhir+json',
-    };
-
+    const headers = { Authorization: 'Bearer ' + accessToken, Accept: 'application/fhir+json' };
     try {
-      const ptResp = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
-      const pt     = await ptResp.json();
-
+      const ptResp  = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
+      const pt      = await ptResp.json();
       const obsResp = await fetch(
         `${FHIR_BASE}/Observation?patient=${patientId}&category=http://terminology.hl7.org/CodeSystem/observation-category|vital-signs&_count=100`,
         { headers }
       );
       const obsBundle = await obsResp.json();
-
       renderPatient(pt);
-      renderObservations(obsBundle);
+      renderObservations(obsBundle, pt.birthDate);
       setStatus('');
-
-    } catch (err) {
-      setStatus('Error loading FHIR data: ' + err.message);
-    }
+    } catch (err) { setStatus('Error loading FHIR data: ' + err.message); }
   }
 
-  // ── Render patient demographics ────────────────────────────────────────────
   function renderPatient(pt) {
-    const name   = pt.name?.[0];
-    const given  = name?.given?.join(' ') ?? '';
-    const family = name?.family ?? '';
-
-    document.getElementById('pt-name').textContent   = `${given} ${family}`.trim() || 'Unknown Patient';
+    const name = pt.name?.[0];
+    document.getElementById('pt-name').textContent   = ([name?.given?.join(' '), name?.family].filter(Boolean).join(' ')) || 'Unknown Patient';
     document.getElementById('pt-dob').textContent    = 'DOB: ' + (pt.birthDate ?? 'N/A');
     document.getElementById('pt-gender').textContent = 'Sex: ' + (pt.gender ?? 'N/A');
     document.getElementById('patient-card').style.display = 'block';
   }
 
-  // ── Render observations table ──────────────────────────────────────────────
-  function renderObservations(bundle) {
+  function renderObservations(bundle, dobFromFHIR) {
     const entries = bundle.entry ?? [];
+    const relevantLOINC = { '8302-2': 'Height', '29463-7': 'Weight', '39156-5': 'BMI' };
 
-    const relevantLOINC = {
-      '8302-2':  'Height',
-      '29463-7': 'Weight',
-      '39156-5': 'BMI',
-    };
-
-    const rows = entries
+    let rows = entries
       .map(e => e.resource)
-      .filter(obs => {
-        const code = obs?.code?.coding?.[0]?.code;
-        return relevantLOINC[code];
-      })
-      .sort((a, b) => new Date(b.effectiveDateTime) - new Date(a.effectiveDateTime));
+      .filter(obs => relevantLOINC[obs?.code?.coding?.[0]?.code])
+      .sort((a, b) => new Date(a.effectiveDateTime) - new Date(b.effectiveDateTime));
 
-    const tbody = document.getElementById('obs-body');
-    tbody.innerHTML = '';
+    let dob = dobFromFHIR;
+    let usingSynthetic = false;
 
     if (rows.length === 0) {
-      const synthetic = [
-        { date: '2018-04-10', type: 'Height', value: 95.2,  unit: 'cm' },
-        { date: '2018-04-10', type: 'Weight', value: 14.1,  unit: 'kg' },
-        { date: '2019-06-15', type: 'Height', value: 102.8, unit: 'cm' },
-        { date: '2019-06-15', type: 'Weight', value: 16.3,  unit: 'kg' },
-        { date: '2020-09-01', type: 'Height', value: 110.4, unit: 'cm' },
-        { date: '2020-09-01', type: 'Weight', value: 18.7,  unit: 'kg' },
-        { date: '2021-11-20', type: 'Height', value: 117.9, unit: 'cm' },
-        { date: '2021-11-20', type: 'Weight', value: 21.2,  unit: 'kg' },
-        { date: '2022-12-05', type: 'Height', value: 124.5, unit: 'cm' },
-        { date: '2022-12-05', type: 'Weight', value: 23.8,  unit: 'kg' },
-        { date: '2024-02-14', type: 'Height', value: 131.0, unit: 'cm' },
-        { date: '2024-02-14', type: 'Weight', value: 26.5,  unit: 'kg' },
-      ];
+      usingSynthetic = true;
+      dob = SYNTHETIC_DOB;
 
       const note = document.createElement('p');
       note.style.cssText = 'font-size:0.75rem;color:#555;margin-top:0.5rem';
-      note.textContent = 'No vitals in sandbox record — showing synthetic demo data.';
+      note.textContent = 'No vitals in sandbox record — showing synthetic pediatric demo data.';
       document.getElementById('patient-card').appendChild(note);
 
-      for (const r of synthetic) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value}</td><td>${r.unit}</td>`;
-        tbody.appendChild(tr);
-      }
-
       window._growthData = {
-        height: synthetic.filter(r => r.type === 'Height').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
-        weight: synthetic.filter(r => r.type === 'Weight').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
+        height: SYNTHETIC.filter(r => r.type === 'Height').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
+        weight: SYNTHETIC.filter(r => r.type === 'Weight').map(r => ({ date: r.date, value: r.value, unit: r.unit })),
         bmi: [],
       };
-      renderChart(window._growthData);
-      return;
+    } else {
+      window._growthData = buildGrowthSeries(rows, relevantLOINC);
     }
 
-    for (const obs of rows) {
-      const code  = obs.code.coding[0].code;
-      const label = relevantLOINC[code];
-      const date  = obs.effectiveDateTime?.split('T')[0] ?? 'N/A';
-      const val   = obs.valueQuantity?.value?.toFixed(1) ?? 'N/A';
-      const unit  = obs.valueQuantity?.unit ?? '';
+    // run anomaly detection on height series
+    const { flags, percentiles } = detectAnomalies(window._growthData.height, dob);
+    const percentileMap = {};
+    percentiles.forEach(p => { percentileMap[p.date] = p.percentile; });
 
+    // render table
+    const tbody = document.getElementById('obs-body');
+    tbody.innerHTML = '';
+    const displayRows = usingSynthetic ? SYNTHETIC : rows.map(obs => ({
+      date: obs.effectiveDateTime?.split('T')[0],
+      type: relevantLOINC[obs.code.coding[0].code],
+      value: obs.valueQuantity?.value,
+      unit: obs.valueQuantity?.unit,
+    }));
+
+    for (const r of displayRows) {
+      const pct = r.type === 'Height' && percentileMap[r.date] !== undefined
+        ? percentileMap[r.date] + 'th' : '';
+      const isFlagged = flags.some(f => f.date === r.date) && r.type === 'Height';
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${date}</td><td>${label}</td><td>${val}</td><td>${unit}</td>`;
+      tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value}</td><td>${r.unit}</td>
+        <td style="color:${isFlagged ? '#ef4444' : '#888'}">${pct}${isFlagged ? ' ⚠' : ''}</td>`;
       tbody.appendChild(tr);
     }
 
-    window._growthData = buildGrowthSeries(rows, relevantLOINC);
-    renderChart(window._growthData);
+    // render flags
+    const flagBox = document.getElementById('flags');
+    flagBox.innerHTML = '';
+    for (const f of flags) {
+      const div = document.createElement('div');
+      div.className = 'flag-alert';
+      div.innerHTML = `<strong>⚠ Flagged ${f.date}:</strong> ${f.message}`;
+      flagBox.appendChild(div);
+    }
+
+    // standard note
+    document.getElementById('standard-note').textContent =
+      'Percentiles: WHO standards used for ages 0-24 months; CDC 2000 charts for ages 2+.';
+
+    renderChart(window._growthData, flags, percentiles);
   }
 
-  // ── Build clean series for charting ───────────────────────────────────────
   function buildGrowthSeries(rows, loinc) {
     const series = { height: [], weight: [], bmi: [] };
     const keyMap = { '8302-2': 'height', '29463-7': 'weight', '39156-5': 'bmi' };
-
     for (const obs of rows) {
-      const code = obs.code.coding[0].code;
-      const key  = keyMap[code];
+      const key = keyMap[obs.code.coding[0].code];
       if (!key) continue;
-      series[key].push({
-        date:  obs.effectiveDateTime?.split('T')[0],
-        value: obs.valueQuantity?.value,
-        unit:  obs.valueQuantity?.unit,
-      });
+      series[key].push({ date: obs.effectiveDateTime?.split('T')[0], value: obs.valueQuantity?.value, unit: obs.valueQuantity?.unit });
     }
-
-    for (const k of Object.keys(series)) {
-      series[k].sort((a, b) => new Date(a.date) - new Date(b.date));
-    }
-
+    for (const k of Object.keys(series)) series[k].sort((a, b) => new Date(a.date) - new Date(b.date));
     return series;
   }
 
-  // ── Phase 4: render growth chart ──────────────────────────────────────────
-  function renderChart(growthData) {
+  function renderChart(growthData, flags, percentiles) {
     const ctx = document.getElementById('growth-chart').getContext('2d');
+    const flagDates = new Set(flags.map(f => f.date));
 
     const heightPoints = growthData.height.map(d => ({ x: d.date, y: d.value }));
     const weightPoints = growthData.weight.map(d => ({ x: d.date, y: d.value }));
+
+    // red dot dataset for flagged height points
+    const flagPoints = growthData.height
+      .filter(d => flagDates.has(d.date))
+      .map(d => ({ x: d.date, y: d.value }));
 
     new Chart(ctx, {
       type: 'line',
@@ -396,6 +474,17 @@
             tension: 0.3,
             pointRadius: 5,
           },
+          {
+            label: 'Flagged point',
+            data: flagPoints,
+            borderColor: 'transparent',
+            backgroundColor: '#ef4444',
+            yAxisID: 'yHeight',
+            type: 'scatter',
+            pointRadius: 9,
+            pointStyle: 'triangle',
+            showLine: false,
+          },
         ],
       },
       options: {
@@ -404,26 +493,29 @@
         interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: { labels: { color: '#ccc' } },
-          tooltip: { bodyColor: '#ccc', titleColor: '#7dd3a8' },
+          tooltip: {
+            bodyColor: '#ccc',
+            titleColor: '#7dd3a8',
+            callbacks: {
+              afterBody: (items) => {
+                const date = items[0]?.label;
+                const pct = percentiles?.find(p => p.date === date);
+                if (pct) return [`Height percentile: ${pct.percentile}th`];
+                return [];
+              },
+            },
+          },
         },
         scales: {
-          x: {
-            type: 'category',
-            ticks: { color: '#888' },
-            grid:  { color: '#222' },
-          },
+          x: { type: 'category', ticks: { color: '#888' }, grid: { color: '#222' } },
           yHeight: {
-            type: 'linear',
-            position: 'left',
-            ticks: { color: '#7dd3a8' },
-            grid:  { color: '#222' },
+            type: 'linear', position: 'left',
+            ticks: { color: '#7dd3a8' }, grid: { color: '#222' },
             title: { display: true, text: 'Height (cm)', color: '#7dd3a8' },
           },
           yWeight: {
-            type: 'linear',
-            position: 'right',
-            ticks: { color: '#f0a868' },
-            grid:  { drawOnChartArea: false },
+            type: 'linear', position: 'right',
+            ticks: { color: '#f0a868' }, grid: { drawOnChartArea: false },
             title: { display: true, text: 'Weight (kg)', color: '#f0a868' },
           },
         },
@@ -431,7 +523,6 @@
     });
   }
 
-  // ── run on page load ───────────────────────────────────────────────────────
   handleCallback();
 </script>
 
