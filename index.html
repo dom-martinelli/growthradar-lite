@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -103,6 +104,7 @@
     </thead>
     <tbody id="obs-body"></tbody>
   </table>
+  <canvas id="growth-chart" style="margin-top:2rem;max-height:350px;"></canvas>
 </div>
 <div id="debug"></div>
 
@@ -318,6 +320,7 @@
     bmi: [],
   };
   console.log('Growth data ready for charting:', window._growthData);
+      renderChart(window._growthData);  // ADD THIS
   return;
 }
 
@@ -335,6 +338,7 @@
 
     window._growthData = buildGrowthSeries(rows, relevantLOINC);
     console.log('Growth data ready for charting:', window._growthData);
+    renderChart(window._growthData);  // ADD THIS
   }
 
   // ── Build clean series for charting ───────────────────────────────────────
@@ -359,7 +363,67 @@
 
     return series;
   }
+function renderChart(growthData) {
+  const ctx = document.getElementById('growth-chart').getContext('2d');
 
+  const heightPoints = growthData.height.map(d => ({ x: d.date, y: d.value }));
+  const weightPoints = growthData.weight.map(d => ({ x: d.date, y: d.value }));
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Height (cm)',
+          data: heightPoints,
+          borderColor: '#7dd3a8',
+          backgroundColor: 'rgba(125,211,168,0.1)',
+          yAxisID: 'yHeight',
+          tension: 0.3,
+          pointRadius: 5,
+        },
+        {
+          label: 'Weight (kg)',
+          data: weightPoints,
+          borderColor: '#f0a868',
+          backgroundColor: 'rgba(240,168,104,0.1)',
+          yAxisID: 'yWeight',
+          tension: 0.3,
+          pointRadius: 5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: { bodyColor: '#ccc', titleColor: '#7dd3a8' },
+      },
+      scales: {
+        x: {
+          type: 'category',
+          ticks: { color: '#888' },
+          grid:  { color: '#222' },
+        },
+        yHeight: {
+          type: 'linear',
+          position: 'left',
+          ticks: { color: '#7dd3a8' },
+          grid:  { color: '#222' },
+          title: { display: true, text: 'Height (cm)', color: '#7dd3a8' },
+        },
+        yWeight: {
+          type: 'linear',
+          position: 'right',
+          ticks: { color: '#f0a868' },
+          grid:  { drawOnChartArea: false },
+          title: { display: true, text: 'Weight (kg)', color: '#f0a868' },
+        },
+      },
+    },
+  });
+}
   // ── run on page load ───────────────────────────────────────────────────────
   handleCallback();
 </script>
