@@ -235,7 +235,7 @@
       const pt     = await ptResp.json();
 
       const obsResp = await fetch(
-        `${FHIR_BASE}/Observation?patient=${patientId}&category=vital-signs&_count=100`,
+        `${FHIR_BASE}/Observation?patient=${patientId}&category=http://terminology.hl7.org/CodeSystem/observation-category|vital-signs&_count=100`,
         { headers }
       );
       const obsBundle = await obsResp.json();
