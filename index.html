@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GrowthRadar Lite</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    h1 { color: #7dd3a8; margin-bottom: 0.25rem; }
+    p  { color: #888; margin-top: 0; }
+    button {
+      margin-top: 1.5rem;
+      padding: 0.75rem 2rem;
+      background: #7dd3a8;
+      color: #0f0f0f;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #5bb890; }
+    #status {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: #888;
+    }
+    #debug {
+      margin-top: 2rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 1rem;
+      font-size: 0.75rem;
+      font-family: monospace;
+      color: #7dd3a8;
+      max-width: 600px;
+      width: 90%;
+      white-space: pre-wrap;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<h1>GrowthRadar Lite</h1>
+<p>Pediatric growth monitoring via Epic FHIR</p>
+<button id="launch-btn" onclick="startLaunch()">Connect to Epic Sandbox</button>
+<div id="status"></div>
+<div id="debug" id="debug-box"></div>
+
+<script>
+  // ── CONFIG ── change only these two lines ──────────────────────────────────
+  const CLIENT_ID    = 'd2de2027-0d0b-401e-b5ab-df8f24f82aa0';
+  const REDIRECT_URI = 'https://dom-martinelli.github.io/growthradar-lite/';
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const EPIC_SANDBOX_BASE = 'https://fhir.epic.com/interconnect-fhir-oauth/oauth2';
+  const AUTH_URL          = EPIC_SANDBOX_BASE + '/authorize';
+  const TOKEN_URL         = EPIC_SANDBOX_BASE + '/token';
+  const FHIR_BASE         = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+
+  const SCOPES = 'openid fhirUser patient/Patient.read patient/Observation.read';
+
+  function setStatus(msg) {
+    document.getElementById('status').textContent = msg;
+  }
+
+  function showDebug(obj) {
+    const box = document.getElementById('debug');
+    box.style.display = 'block';
+    box.textContent = JSON.stringify(obj, null, 2);
+  }
+
+  // ── PKCE helpers ───────────────────────────────────────────────────────────
+  function base64urlEncode(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  async function generatePKCE() {
+    const verifier = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const hash     = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    const challenge = base64urlEncode(hash);
+    return { verifier, challenge };
+  }
+
+  // ── Step 1: kick off the auth redirect ────────────────────────────────────
+  async function startLaunch() {
+    setStatus('Generating PKCE and redirecting to Epic...');
+
+    const { verifier, challenge } = await generatePKCE();
+    const state = base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+
+    // store for after redirect
+    sessionStorage.setItem('pkce_verifier', verifier);
+    sessionStorage.setItem('oauth_state',   state);
+
+    const params = new URLSearchParams({
+      response_type:         'code',
+      client_id:             CLIENT_ID,
+      redirect_uri:          REDIRECT_URI,
+      scope:                 SCOPES,
+      state:                 state,
+      code_challenge:        challenge,
+      code_challenge_method: 'S256',
+      aud:                   FHIR_BASE,
+    });
+
+    window.location.href = AUTH_URL + '?' + params.toString();
+  }
+
+  // ── Step 2: handle the redirect back ──────────────────────────────────────
+  async function handleCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code   = params.get('code');
+    const state  = params.get('state');
+    const error  = params.get('error');
+
+    if (error) {
+      setStatus('Auth error: ' + error + ' — ' + params.get('error_description'));
+      return;
+    }
+
+    if (!code) return; // no code means we're on the initial load, not a callback
+
+    // verify state to prevent CSRF
+    const savedState = sessionStorage.getItem('oauth_state');
+    if (state !== savedState) {
+      setStatus('State mismatch — possible CSRF. Aborting.');
+      return;
+    }
+
+    const verifier = sessionStorage.getItem('pkce_verifier');
+    setStatus('Got auth code. Exchanging for token...');
+
+    // clean url without reloading
+    window.history.replaceState({}, document.title, REDIRECT_URI);
+
+    const body = new URLSearchParams({
+      grant_type:    'authorization_code',
+      code:          code,
+      redirect_uri:  REDIRECT_URI,
+      client_id:     CLIENT_ID,
+      code_verifier: verifier,
+    });
+
+    try {
+      const resp = await fetch(TOKEN_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    body.toString(),
+      });
+
+      const token = await resp.json();
+
+      if (token.error) {
+        setStatus('Token error: ' + token.error + ' — ' + token.error_description);
+        showDebug(token);
+        return;
+      }
+
+      // store token
+      sessionStorage.setItem('access_token', token.access_token);
+      sessionStorage.setItem('patient_id',   token.patient);
+
+      setStatus('Authenticated. Loading patient data...');
+      showDebug({ success: true, patient_id: token.patient, expires_in: token.expires_in });
+
+      // hand off to Phase 3 (not yet written)
+      // loadPatientData(token.access_token, token.patient);
+
+    } catch (err) {
+      setStatus('Network error during token exchange: ' + err.message);
+    }
+  }
+
+  // ── run on page load ───────────────────────────────────────────────────────
+  handleCallback();
+</script>
+
+</body>
+</html>
