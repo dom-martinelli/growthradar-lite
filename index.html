@@ -15,6 +15,8 @@
       justify-content: center;
       min-height: 100vh;
       margin: 0;
+      padding: 2rem;
+      box-sizing: border-box;
     }
     h1 { color: #7dd3a8; margin-bottom: 0.25rem; }
     p  { color: #888; margin-top: 0; }
@@ -44,10 +46,39 @@
       font-size: 0.75rem;
       font-family: monospace;
       color: #7dd3a8;
-      max-width: 600px;
+      max-width: 700px;
       width: 90%;
       white-space: pre-wrap;
       display: none;
+    }
+    #patient-card {
+      margin-top: 2rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      max-width: 700px;
+      width: 90%;
+      display: none;
+    }
+    #patient-card h2 { margin: 0 0 0.5rem; color: #7dd3a8; font-size: 1.1rem; }
+    #patient-card p  { margin: 0.2rem 0; font-size: 0.9rem; color: #ccc; }
+    #obs-table {
+      margin-top: 1.5rem;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    #obs-table th {
+      text-align: left;
+      color: #7dd3a8;
+      border-bottom: 1px solid #333;
+      padding: 0.4rem 0.5rem;
+    }
+    #obs-table td {
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid #1f1f1f;
+      color: #ccc;
     }
   </style>
 </head>
@@ -57,10 +88,26 @@
 <p>Pediatric growth monitoring via Epic FHIR</p>
 <button id="launch-btn" onclick="startLaunch()">Connect to Epic Sandbox</button>
 <div id="status"></div>
-<div id="debug" id="debug-box"></div>
+<div id="patient-card">
+  <h2 id="pt-name"></h2>
+  <p id="pt-dob"></p>
+  <p id="pt-gender"></p>
+  <table id="obs-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Measurement</th>
+        <th>Value</th>
+        <th>Unit</th>
+      </tr>
+    </thead>
+    <tbody id="obs-body"></tbody>
+  </table>
+</div>
+<div id="debug"></div>
 
 <script>
-  // ── CONFIG ── change only these two lines ──────────────────────────────────
+  // ── CONFIG ─────────────────────────────────────────────────────────────────
   const CLIENT_ID    = 'd2de2027-0d0b-401e-b5ab-df8f24f82aa0';
   const REDIRECT_URI = 'https://dom-martinelli.github.io/growthradar-lite/';
   // ──────────────────────────────────────────────────────────────────────────
@@ -89,8 +136,8 @@
   }
 
   async function generatePKCE() {
-    const verifier = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
-    const hash     = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    const verifier  = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const hash      = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
     const challenge = base64urlEncode(hash);
     return { verifier, challenge };
   }
@@ -98,11 +145,9 @@
   // ── Step 1: kick off the auth redirect ────────────────────────────────────
   async function startLaunch() {
     setStatus('Generating PKCE and redirecting to Epic...');
-
     const { verifier, challenge } = await generatePKCE();
     const state = base64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
 
-    // store for after redirect
     sessionStorage.setItem('pkce_verifier', verifier);
     sessionStorage.setItem('oauth_state',   state);
 
@@ -111,7 +156,7 @@
       client_id:             CLIENT_ID,
       redirect_uri:          REDIRECT_URI,
       scope:                 SCOPES,
-      state:                 state,
+      state,
       code_challenge:        challenge,
       code_challenge_method: 'S256',
       aud:                   FHIR_BASE,
@@ -131,10 +176,8 @@
       setStatus('Auth error: ' + error + ' — ' + params.get('error_description'));
       return;
     }
+    if (!code) return;
 
-    if (!code) return; // no code means we're on the initial load, not a callback
-
-    // verify state to prevent CSRF
     const savedState = sessionStorage.getItem('oauth_state');
     if (state !== savedState) {
       setStatus('State mismatch — possible CSRF. Aborting.');
@@ -143,25 +186,22 @@
 
     const verifier = sessionStorage.getItem('pkce_verifier');
     setStatus('Got auth code. Exchanging for token...');
-
-    // clean url without reloading
     window.history.replaceState({}, document.title, REDIRECT_URI);
 
     const body = new URLSearchParams({
       grant_type:    'authorization_code',
-      code:          code,
+      code,
       redirect_uri:  REDIRECT_URI,
       client_id:     CLIENT_ID,
       code_verifier: verifier,
     });
 
     try {
-      const resp = await fetch(TOKEN_URL, {
+      const resp  = await fetch(TOKEN_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body:    body.toString(),
       });
-
       const token = await resp.json();
 
       if (token.error) {
@@ -170,19 +210,118 @@
         return;
       }
 
-      // store token
       sessionStorage.setItem('access_token', token.access_token);
       sessionStorage.setItem('patient_id',   token.patient);
 
       setStatus('Authenticated. Loading patient data...');
-      showDebug({ success: true, patient_id: token.patient, expires_in: token.expires_in });
-
-      // hand off to Phase 3 (not yet written)
-      // loadPatientData(token.access_token, token.patient);
+      await loadPatientData(token.access_token, token.patient);
 
     } catch (err) {
       setStatus('Network error during token exchange: ' + err.message);
     }
+  }
+
+  // ── Step 3: fetch patient + observations ──────────────────────────────────
+  async function loadPatientData(accessToken, patientId) {
+    const headers = { Authorization: 'Bearer ' + accessToken };
+
+    try {
+      // fetch patient demographics
+      const ptResp = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
+      const pt     = await ptResp.json();
+
+      // fetch vital signs (height + weight live in this category)
+      const obsResp = await fetch(
+        `${FHIR_BASE}/Observation?patient=${patientId}&category=vital-signs&_count=100`,
+        { headers }
+      );
+      const obsBundle = await obsResp.json();
+
+      renderPatient(pt);
+      renderObservations(obsBundle);
+      setStatus('');
+
+    } catch (err) {
+      setStatus('Error loading FHIR data: ' + err.message);
+    }
+  }
+
+  // ── Render patient demographics ────────────────────────────────────────────
+  function renderPatient(pt) {
+    const name   = pt.name?.[0];
+    const given  = name?.given?.join(' ') ?? '';
+    const family = name?.family ?? '';
+
+    document.getElementById('pt-name').textContent   = `${given} ${family}`.trim() || 'Unknown Patient';
+    document.getElementById('pt-dob').textContent    = 'DOB: ' + (pt.birthDate ?? 'N/A');
+    document.getElementById('pt-gender').textContent = 'Sex: ' + (pt.gender ?? 'N/A');
+    document.getElementById('patient-card').style.display = 'block';
+  }
+
+  // ── Render observations table ──────────────────────────────────────────────
+  function renderObservations(bundle) {
+    const entries = bundle.entry ?? [];
+
+    const relevantLOINC = {
+      '8302-2':  'Height',
+      '29463-7': 'Weight',
+      '39156-5': 'BMI',
+    };
+
+    const rows = entries
+      .map(e => e.resource)
+      .filter(obs => {
+        const code = obs?.code?.coding?.[0]?.code;
+        return relevantLOINC[code];
+      })
+      .sort((a, b) => new Date(b.effectiveDateTime) - new Date(a.effectiveDateTime));
+
+    const tbody = document.getElementById('obs-body');
+    tbody.innerHTML = '';
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#666">No height/weight data found.</td></tr>';
+      return;
+    }
+
+    for (const obs of rows) {
+      const code  = obs.code.coding[0].code;
+      const label = relevantLOINC[code];
+      const date  = obs.effectiveDateTime?.split('T')[0] ?? 'N/A';
+      const val   = obs.valueQuantity?.value?.toFixed(1) ?? 'N/A';
+      const unit  = obs.valueQuantity?.unit ?? '';
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${date}</td><td>${label}</td><td>${val}</td><td>${unit}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    // stash structured data on window for Phase 4 (charting)
+    window._growthData = buildGrowthSeries(rows, relevantLOINC);
+    console.log('Growth data ready for charting:', window._growthData);
+  }
+
+  // ── Build clean series for charting ───────────────────────────────────────
+  function buildGrowthSeries(rows, loinc) {
+    const series = { height: [], weight: [], bmi: [] };
+    const keyMap = { '8302-2': 'height', '29463-7': 'weight', '39156-5': 'bmi' };
+
+    for (const obs of rows) {
+      const code = obs.code.coding[0].code;
+      const key  = keyMap[code];
+      if (!key) continue;
+      series[key].push({
+        date:  obs.effectiveDateTime?.split('T')[0],
+        value: obs.valueQuantity?.value,
+        unit:  obs.valueQuantity?.unit,
+      });
+    }
+
+    for (const k of Object.keys(series)) {
+      series[k].sort((a, b) => new Date(a.date) - new Date(b.date));
+    }
+
+    return series;
   }
 
   // ── run on page load ───────────────────────────────────────────────────────
