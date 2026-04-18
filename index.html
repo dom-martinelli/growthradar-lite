@@ -264,6 +264,7 @@
   // ── Render observations table ──────────────────────────────────────────────
   function renderObservations(bundle) {
     const entries = bundle.entry ?? [];
+    console.log('Raw obs entries:', JSON.stringify(entries.slice(0,3), null, 2));
 
     const relevantLOINC = {
       '8302-2':  'Height',
