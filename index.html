@@ -550,8 +550,12 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
 
     renderChart(window._growthData, flags, percentiles);
 
-    // kick off LLM summary
-    generateSummary();
+    // add button to trigger summary on demand
+const summaryBtn = document.createElement('button');
+summaryBtn.textContent = 'Generate AI Clinical Summary';
+summaryBtn.style.cssText = 'margin-top:1.5rem;width:100%;';
+summaryBtn.onclick = generateSummary;
+document.getElementById('patient-card').appendChild(summaryBtn);
   }
 
   function buildGrowthSeries(rows, loinc) {
