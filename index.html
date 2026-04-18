@@ -226,8 +226,10 @@
 
   // ── Step 3: fetch patient + observations ──────────────────────────────────
   async function loadPatientData(accessToken, patientId) {
-    const headers = { Authorization: 'Bearer ' + accessToken };
-
+    const headers = {
+  Authorization: 'Bearer ' + accessToken,
+  Accept: 'application/fhir+json',
+};                              
     try {
       const ptResp = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
       const pt     = await ptResp.json();
