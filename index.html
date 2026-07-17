@@ -120,6 +120,11 @@
       border-collapse: collapse;
       font-size: 0.85rem;
     }
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border-bottom: 1px solid #222;
+    }
     .data-table th {
       text-align: left;
       color: #7dd3a8;
@@ -130,6 +135,11 @@
       padding: 0.35rem 0.5rem;
       border-bottom: 1px solid #1f1f1f;
       color: #ccc;
+      vertical-align: top;
+    }
+    .data-table td:last-child {
+      max-width: 240px;
+      overflow-wrap: anywhere;
     }
     #chart-container {
       margin-top: 2rem;
@@ -262,34 +272,62 @@
   <div id="context-note" class="context-note">Optional context appears here after entry.</div>
 
   <div class="section-title">Parsed FHIR vitals</div>
-  <table id="obs-table" class="data-table">
-    <thead>
-      <tr>
-        <th>Date</th><th>Measurement</th><th>Normalized</th><th>Raw</th><th>Percentile</th><th>FHIR id</th>
-      </tr>
-    </thead>
-    <tbody id="obs-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="obs-table" class="data-table">
+      <thead>
+        <tr>
+          <th>Date</th><th>Measurement</th><th>Normalized</th><th>Raw</th><th>Chart use</th><th>FHIR id</th>
+        </tr>
+      </thead>
+      <tbody id="obs-body"></tbody>
+    </table>
+  </div>
   <div id="chart-container"><canvas id="growth-chart"></canvas></div>
   <div class="section-title">Height velocity</div>
-  <table id="velocity-table" class="data-table">
-    <thead>
-      <tr>
-        <th>From</th><th>To</th><th>Interval</th><th>Velocity</th><th>Flag</th>
-      </tr>
-    </thead>
-    <tbody id="velocity-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="velocity-table" class="data-table">
+      <thead>
+        <tr>
+          <th>From</th><th>To</th><th>Interval</th><th>Velocity</th><th>Flag</th>
+        </tr>
+      </thead>
+      <tbody id="velocity-body"></tbody>
+    </table>
+  </div>
   <div id="velocity-chart-container"><canvas id="velocity-chart"></canvas></div>
   <div class="section-title">Parsed FHIR labs</div>
-  <table id="lab-table" class="data-table">
-    <thead>
-      <tr>
-        <th>Date</th><th>Lab</th><th>Value</th><th>Unit</th><th>Flag</th><th>FHIR id</th>
-      </tr>
-    </thead>
-    <tbody id="lab-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="lab-table" class="data-table">
+      <thead>
+        <tr>
+          <th>Date</th><th>Lab</th><th>Value</th><th>Unit</th><th>Flag</th><th>FHIR id</th>
+        </tr>
+      </thead>
+      <tbody id="lab-body"></tbody>
+    </table>
+  </div>
+  <div class="section-title">Parsed FHIR medications</div>
+  <div class="table-wrap">
+    <table id="med-table" class="data-table">
+      <thead>
+        <tr>
+          <th>Status</th><th>Medication</th><th>Date</th><th>FHIR id</th>
+        </tr>
+      </thead>
+      <tbody id="med-body"></tbody>
+    </table>
+  </div>
+  <div class="section-title">Parsed FHIR conditions</div>
+  <div class="table-wrap">
+    <table id="condition-table" class="data-table">
+      <thead>
+        <tr>
+          <th>Status</th><th>Condition</th><th>Date</th><th>FHIR id</th>
+        </tr>
+      </thead>
+      <tbody id="condition-body"></tbody>
+    </table>
+  </div>
   <div id="flags"></div>
   <p id="standard-note"></p>
   <div id="summary-section">
@@ -321,7 +359,7 @@
   const AUTH_URL  = EPIC_SANDBOX_BASE + '/authorize';
   const TOKEN_URL = EPIC_SANDBOX_BASE + '/token';
   const FHIR_BASE = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
-  const SCOPES    = 'openid fhirUser patient/Patient.read patient/Observation.read';
+  const SCOPES    = 'openid fhirUser patient/Patient.read patient/Observation.read patient/MedicationRequest.read patient/Condition.read';
 
   const OPENROUTER_URL   = 'https://openrouter.ai/api/v1/chat/completions';
   const OPENROUTER_MODEL = 'openai/gpt-4o';
@@ -337,6 +375,7 @@
 
   let growthChart = null;
   let velocityChart = null;
+  let currentPatient = null;
 
   // ── WHO boys height 0-24mo ─────────────────────────────────────────────────
   const WHO_BOYS = [
@@ -396,7 +435,23 @@
     return (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth());
   }
 
+  function ageYearsOnDate(dob, dateStr) {
+    if (!dob || !dateStr) return null;
+    return (new Date(dateStr) - new Date(dob)) / (1000 * 60 * 60 * 24 * 365.25);
+  }
+
+  function patientCurrentAgeYears(dob) {
+    if (!dob) return null;
+    return (new Date() - new Date(dob)) / (1000 * 60 * 60 * 24 * 365.25);
+  }
+
+  function isPediatricPatient(dob) {
+    const age = patientCurrentAgeYears(dob);
+    return age !== null && age >= 0 && age < 19;
+  }
+
   function getPercentile(cm, ageMonths) {
+    if (ageMonths < 0 || ageMonths > 120) return null;
     const tbl = ageMonths <= 24 ? WHO_BOYS : CDC_BOYS;
     let lo = tbl[0], hi = tbl[tbl.length - 1];
     for (let i = 0; i < tbl.length - 1; i++) {
@@ -418,7 +473,7 @@
       ...pt,
       ageMonths: monthsBetween(dob, pt.date),
       percentile: getPercentile(pt.value, monthsBetween(dob, pt.date)),
-    }));
+    })).filter(pt => pt.percentile !== null);
     const flags = [];
     for (let i = 1; i < percentiles.length; i++) {
       const prev = percentiles[i-1], curr = percentiles[i];
@@ -586,8 +641,10 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       const pt      = await ptResp.json();
       const vitalBundle = await fetchObservationsByCodes(patientId, Object.keys(VITAL_CODES), headers);
       const labBundle   = await fetchObservationsByCategory(patientId, 'laboratory', headers);
+      const medBundle   = await fetchResourceSearch('MedicationRequest', patientId, headers, { _count: '100' });
+      const condBundle  = await fetchResourceSearch('Condition', patientId, headers, { _count: '100' });
       renderPatient(pt);
-      renderObservations(vitalBundle, labBundle, pt);
+      renderObservations(vitalBundle, labBundle, medBundle, condBundle, pt);
       setStatus('');
     } catch(err) { setStatus('Error: '+err.message); }
   }
@@ -630,6 +687,22 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       _count: '100',
     });
     const firstUrl = `${FHIR_BASE}/Observation?${params.toString()}`;
+    const resources = [];
+    let nextUrl = firstUrl;
+
+    while (nextUrl) {
+      const resp = await fetch(nextUrl, { headers });
+      const bundle = await resp.json();
+      resources.push(...(bundle.entry ?? []).map(e => e.resource));
+      nextUrl = (bundle.link ?? []).find(l => l.relation === 'next')?.url || '';
+    }
+
+    return { resourceType: 'Bundle', entry: resources.map(resource => ({ resource })) };
+  }
+
+  async function fetchResourceSearch(resourceType, patientId, headers, extraParams = {}) {
+    const params = new URLSearchParams({ patient: patientId, ...extraParams });
+    const firstUrl = `${FHIR_BASE}/${resourceType}?${params.toString()}`;
     const resources = [];
     let nextUrl = firstUrl;
 
@@ -723,10 +796,50 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     };
   }
 
-  function renderObservations(vitalBundle, labBundle, patient) {
+  function medicationName(med) {
+    return med.medicationCodeableConcept?.text ||
+      med.medicationCodeableConcept?.coding?.find(c => c.display)?.display ||
+      med.contained?.find(r => r.resourceType === 'Medication')?.code?.text ||
+      med.contained?.find(r => r.resourceType === 'Medication')?.code?.coding?.find(c => c.display)?.display ||
+      med.medicationReference?.display ||
+      '';
+  }
+
+  function parseMedication(med) {
+    const name = medicationName(med);
+    if (!name) return null;
+    return {
+      id: med.id || '',
+      status: med.status || '',
+      name,
+      date: (med.authoredOn || med.meta?.lastUpdated || '').split('T')[0],
+    };
+  }
+
+  function conditionName(cond) {
+    return cond.code?.text ||
+      cond.code?.coding?.find(c => c.display)?.display ||
+      cond.code?.coding?.[0]?.code ||
+      '';
+  }
+
+  function parseCondition(cond) {
+    const name = conditionName(cond);
+    if (!name) return null;
+    return {
+      id: cond.id || '',
+      status: cond.clinicalStatus?.coding?.find(c => c.code)?.code || '',
+      name,
+      date: (cond.recordedDate || cond.onsetDateTime || cond.meta?.lastUpdated || '').split('T')[0],
+    };
+  }
+
+  function renderObservations(vitalBundle, labBundle, medBundle, condBundle, patient) {
+    currentPatient = patient;
     const dob = patient.birthDate || '';
     const nameFHIR = patient.name;
     const name = nameFHIR?.[0] ? ([nameFHIR[0].given?.join(' '), nameFHIR[0].family].filter(Boolean).join(' ')) : 'Patient';
+    const pediatric = isPediatricPatient(dob);
     const vitalRows = (vitalBundle.entry ?? [])
       .map(e => parseVital(e.resource))
       .filter(Boolean)
@@ -735,13 +848,21 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       .map(e => parseLab(e.resource))
       .filter(Boolean)
       .sort((a,b) => new Date(b.date) - new Date(a.date));
+    const medRows = (medBundle.entry ?? [])
+      .map(e => parseMedication(e.resource))
+      .filter(Boolean)
+      .sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0));
+    const conditionRows = (condBundle.entry ?? [])
+      .map(e => parseCondition(e.resource))
+      .filter(Boolean)
+      .sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0));
 
-    window._growthData = buildGrowthSeries(vitalRows);
+    window._growthData = buildGrowthSeries(vitalRows, dob, pediatric);
 
-    const { flags: percentileFlags, percentiles } = dob
+    const { flags: percentileFlags, percentiles } = dob && pediatric
       ? detectAnomalies(window._growthData.height, dob)
       : { flags: [], percentiles: [] };
-    const velocities = computeVelocities(window._growthData.height);
+    const velocities = pediatric ? computeVelocities(window._growthData.height) : [];
     const flags = [...percentileFlags, ...velocityFlags(velocities)];
     const pctMap = {};
     percentiles.forEach(p => { pctMap[p.date] = p.percentile; });
@@ -754,14 +875,18 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       flags,
     };
 
-    renderVitalsTable(vitalRows, pctMap, flags);
-    renderVelocityTable(velocities);
+    renderVitalsTable(vitalRows, pctMap, flags, dob, pediatric);
+    renderVelocityTable(velocities, pediatric);
     renderLabsTable(labRows);
+    renderMedicationTable(medRows);
+    renderConditionTable(conditionRows);
     renderFlagAlerts(flags);
     renderContextNotes();
 
     document.getElementById('standard-note').textContent =
-      'Verification mode: values above are parsed from Epic FHIR Observation resources. Percentiles use this prototype reference table and should be treated as approximate.';
+      pediatric
+        ? 'Verification mode: values above are parsed from Epic FHIR resources. Percentiles use this prototype pediatric reference table and should be treated as approximate.'
+        : 'Verification mode: values above are parsed from Epic FHIR resources. This sandbox patient is not pediatric, so pediatric percentiles and height velocity calculations are intentionally suppressed.';
 
     if (!vitalRows.length) {
       const flagBox = document.getElementById('flags');
@@ -778,8 +903,11 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       parsed_heights: window._growthData.height.length,
       parsed_weights: window._growthData.weight.length,
       parsed_labs: labRows.length,
+      parsed_medications: medRows.length,
+      parsed_conditions: conditionRows.length,
       vital_codes_requested: Object.keys(VITAL_CODES),
       lab_category_requested: 'laboratory',
+      pediatric_growth_calculations_enabled: pediatric,
       note: 'No synthetic fallback is used in this verification build.',
     });
 
@@ -799,14 +927,50 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     }
   }
 
-  function buildGrowthSeries(rows) {
+  function dedupeByDate(rows) {
+    const byDate = new Map();
+    for (const row of rows) {
+      if (!byDate.has(row.date)) {
+        byDate.set(row.date, row);
+        continue;
+      }
+      const existing = byDate.get(row.date);
+      if (Math.abs(row.value - existing.value) < 0.01) continue;
+      byDate.set(row.date, {
+        ...row,
+        value: Number(((row.value + existing.value) / 2).toFixed(2)),
+        rawValue: `${existing.rawValue}; ${row.rawValue}`,
+        rawUnit: `${existing.rawUnit}; ${row.rawUnit}`,
+        id: `${existing.id}; ${row.id}`,
+        chartNote: 'same-day duplicate averaged',
+      });
+    }
+    return [...byDate.values()].sort((a,b)=>new Date(a.date)-new Date(b.date));
+  }
+
+  function rowChartStatus(row, dob, pediatric) {
+    if (!pediatric) return 'not plotted: non-pediatric sandbox patient';
+    const age = ageYearsOnDate(dob, row.date);
+    if (age === null || age < 0 || age > 19) return 'not plotted: age outside pediatric range';
+    if (row.type === 'Height' && (row.value < 45 || row.value > 220)) return 'not plotted: implausible height';
+    if (row.type === 'Weight' && (row.value < 1 || row.value > 180)) return 'not plotted: implausible weight';
+    if (row.type === 'BMI' && (row.value < 5 || row.value > 80)) return 'not plotted: implausible BMI';
+    return 'plotted';
+  }
+
+  function buildGrowthSeries(rows, dob, pediatric) {
     const s = { height:[], weight:[], bmi:[] };
     for (const row of rows) {
-      if (row.type === 'Height') s.height.push(row);
-      if (row.type === 'Weight') s.weight.push(row);
-      if (row.type === 'BMI') s.bmi.push(row);
+      const status = rowChartStatus(row, dob, pediatric);
+      const enriched = { ...row, chartStatus: status };
+      if (status !== 'plotted') continue;
+      if (row.type === 'Height') s.height.push(enriched);
+      if (row.type === 'Weight') s.weight.push(enriched);
+      if (row.type === 'BMI') s.bmi.push(enriched);
     }
-    for (const key of Object.keys(s)) s[key].sort((a,b)=>new Date(a.date)-new Date(b.date));
+    s.height = dedupeByDate(s.height);
+    s.weight = dedupeByDate(s.weight);
+    s.bmi = dedupeByDate(s.bmi);
     return s;
   }
 
@@ -845,7 +1009,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       }));
   }
 
-  function renderVitalsTable(rows, pctMap, flags) {
+  function renderVitalsTable(rows, pctMap, flags, dob, pediatric) {
     const tbody = document.getElementById('obs-body');
     tbody.innerHTML = '';
     if (!rows.length) {
@@ -855,16 +1019,24 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     for (const r of rows) {
       const pct = r.type === 'Height' && pctMap[r.date] !== undefined ? pctMap[r.date] + 'th' : '';
       const isFlagged = flags.some(f => f.date === r.date) && r.type === 'Height';
+      const chartStatus = rowChartStatus(r, dob, pediatric);
+      const chartCell = chartStatus === 'plotted' && pct
+        ? `${chartStatus}; ${pct}`
+        : chartStatus;
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value} ${r.unit}</td><td>${r.rawValue} ${r.rawUnit}</td>
-        <td style="color:${isFlagged?'#ef4444':'#888'}">${pct}${isFlagged?' !':''}</td><td>${r.id}</td>`;
+        <td style="color:${isFlagged?'#ef4444':'#888'}">${chartCell}${isFlagged?' !':''}</td><td>${r.id}</td>`;
       tbody.appendChild(tr);
     }
   }
 
-  function renderVelocityTable(velocities) {
+  function renderVelocityTable(velocities, pediatric = true) {
     const tbody = document.getElementById('velocity-body');
     tbody.innerHTML = '';
+    if (!pediatric) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-note">Suppressed because this sandbox patient is not pediatric.</td></tr>';
+      return;
+    }
     if (!velocities.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty-note">At least two height observations are required.</td></tr>';
       return;
@@ -889,6 +1061,34 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     for (const r of rows) {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${r.date}</td><td>${r.name}</td><td>${r.value}</td><td>${r.unit}</td><td>${r.flag || ''}</td><td>${r.id}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderMedicationTable(rows) {
+    const tbody = document.getElementById('med-body');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No MedicationRequest resources returned.</td></tr>';
+      return;
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.status}</td><td>${r.name}</td><td>${r.date || ''}</td><td>${r.id}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderConditionTable(rows) {
+    const tbody = document.getElementById('condition-body');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No Condition resources returned.</td></tr>';
+      return;
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.status}</td><td>${r.name}</td><td>${r.date || ''}</td><td>${r.id}</td>`;
       tbody.appendChild(tr);
     }
   }
