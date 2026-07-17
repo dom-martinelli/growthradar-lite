@@ -281,7 +281,7 @@
     <tbody id="velocity-body"></tbody>
   </table>
   <div id="velocity-chart-container"><canvas id="velocity-chart"></canvas></div>
-  <div class="section-title">Parsed growth-relevant labs</div>
+  <div class="section-title">Parsed FHIR labs</div>
   <table id="lab-table" class="data-table">
     <thead>
       <tr>
@@ -333,17 +333,6 @@
     '29463-7': 'Weight',
     '3141-9': 'Weight',
     '39156-5': 'BMI',
-  };
-  const LAB_CODES = {
-    '3016-3': 'TSH',
-    '4635-9': 'TSH',
-    '14647-5': 'Free T4',
-    '718-7': 'Hemoglobin',
-    '4544-3': 'Hematocrit',
-    '2088-5': 'tTG-IgA',
-    '2154-5': 'Total IgA',
-    '2857-1': 'IGF-1',
-    '2986-8': 'IGF-BP3',
   };
 
   let growthChart = null;
@@ -596,7 +585,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       const ptResp  = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
       const pt      = await ptResp.json();
       const vitalBundle = await fetchObservationsByCodes(patientId, Object.keys(VITAL_CODES), headers);
-      const labBundle   = await fetchObservationsByCodes(patientId, Object.keys(LAB_CODES), headers);
+      const labBundle   = await fetchObservationsByCategory(patientId, 'laboratory', headers);
       renderPatient(pt);
       renderObservations(vitalBundle, labBundle, pt);
       setStatus('');
@@ -617,6 +606,27 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       patient: patientId,
       code: codes.map(c => `http://loinc.org|${c}`).join(','),
       _sort: 'date',
+      _count: '100',
+    });
+    const firstUrl = `${FHIR_BASE}/Observation?${params.toString()}`;
+    const resources = [];
+    let nextUrl = firstUrl;
+
+    while (nextUrl) {
+      const resp = await fetch(nextUrl, { headers });
+      const bundle = await resp.json();
+      resources.push(...(bundle.entry ?? []).map(e => e.resource));
+      nextUrl = (bundle.link ?? []).find(l => l.relation === 'next')?.url || '';
+    }
+
+    return { resourceType: 'Bundle', entry: resources.map(resource => ({ resource })) };
+  }
+
+  async function fetchObservationsByCategory(patientId, category, headers) {
+    const params = new URLSearchParams({
+      patient: patientId,
+      category: `http://terminology.hl7.org/CodeSystem/observation-category|${category}`,
+      _sort: '-date',
       _count: '100',
     });
     const firstUrl = `${FHIR_BASE}/Observation?${params.toString()}`;
@@ -696,7 +706,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
   }
 
   function parseLab(obs) {
-    const code = getCodes(obs).find(c => LAB_CODES[c]);
+    const code = getCodes(obs)[0] || '';
     const q = getQuantity(obs);
     const date = getObservationDate(obs);
     if (!code || !q || !date) return null;
@@ -704,7 +714,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     return {
       id: obs.id || '',
       date,
-      name: LAB_CODES[code],
+      name: getDisplay(obs) || code,
       code,
       display: getDisplay(obs),
       value: q.value,
@@ -769,7 +779,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       parsed_weights: window._growthData.weight.length,
       parsed_labs: labRows.length,
       vital_codes_requested: Object.keys(VITAL_CODES),
-      lab_codes_requested: Object.keys(LAB_CODES),
+      lab_category_requested: 'laboratory',
       note: 'No synthetic fallback is used in this verification build.',
     });
 
@@ -873,7 +883,7 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     const tbody = document.getElementById('lab-body');
     tbody.innerHTML = '';
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No growth-relevant lab observations returned.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No laboratory-category Observation resources returned.</td></tr>';
       return;
     }
     for (const r of rows) {
