@@ -14,7 +14,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       min-height: 100vh;
       margin: 0;
       padding: 2rem;
@@ -61,19 +61,72 @@
     }
     #patient-card h2 { margin: 0 0 0.5rem; color: #7dd3a8; font-size: 1.1rem; }
     #patient-card p  { margin: 0.2rem 0; font-size: 0.9rem; color: #ccc; }
-    #obs-table {
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .field label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      color: #999;
+      margin-bottom: 0.25rem;
+    }
+    .field input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 0.5rem 0.6rem;
+      background: #111;
+      color: #e0e0e0;
+    }
+    .field.checkbox {
+      display: flex;
+      align-items: end;
+      padding-bottom: 0.45rem;
+    }
+    .field.checkbox label {
+      margin: 0;
+    }
+    .info-dot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1rem;
+      height: 1rem;
+      border: 1px solid #555;
+      border-radius: 50%;
+      color: #7dd3a8;
+      font-size: 0.7rem;
+      cursor: help;
+    }
+    .context-note {
+      margin-top: 0.75rem;
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 0.75rem;
+      font-size: 0.78rem;
+      color: #aaa;
+      line-height: 1.5;
+    }
+    .data-table {
       margin-top: 1.5rem;
       width: 100%;
       border-collapse: collapse;
       font-size: 0.85rem;
     }
-    #obs-table th {
+    .data-table th {
       text-align: left;
       color: #7dd3a8;
       border-bottom: 1px solid #333;
       padding: 0.4rem 0.5rem;
     }
-    #obs-table td {
+    .data-table td {
       padding: 0.35rem 0.5rem;
       border-bottom: 1px solid #1f1f1f;
       color: #ccc;
@@ -83,6 +136,23 @@
       position: relative;
       height: 350px;
       width: 100%;
+    }
+    #velocity-chart-container {
+      margin-top: 2rem;
+      position: relative;
+      height: 320px;
+      width: 100%;
+    }
+    .section-title {
+      margin: 1.5rem 0 0.25rem;
+      color: #7dd3a8;
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+    }
+    .empty-note {
+      margin-top: 0.75rem;
+      color: #777;
+      font-size: 0.82rem;
     }
     #flags {
       margin-top: 1.25rem;
@@ -170,15 +240,56 @@
   <h2 id="pt-name"></h2>
   <p id="pt-dob"></p>
   <p id="pt-gender"></p>
-  <table id="obs-table">
+
+  <div class="section-title">Clinical context</div>
+  <div class="controls-grid">
+    <div class="field">
+      <label for="mother-height">Maternal height (cm) <span class="info-dot" title="Used to estimate midparental target height; not written to Epic.">i</span></label>
+      <input id="mother-height" type="number" min="120" max="210" step="0.1" placeholder="optional" oninput="renderContextNotes()" />
+    </div>
+    <div class="field">
+      <label for="father-height">Paternal height (cm) <span class="info-dot" title="Used to estimate midparental target height; not written to Epic.">i</span></label>
+      <input id="father-height" type="number" min="120" max="230" step="0.1" placeholder="optional" oninput="renderContextNotes()" />
+    </div>
+    <div class="field">
+      <label for="gest-age">Gestational age (weeks) <span class="info-dot" title="Helps distinguish prematurity/SGA context from postnatal growth faltering.">i</span></label>
+      <input id="gest-age" type="number" min="22" max="42" step="0.1" placeholder="optional" oninput="renderContextNotes()" />
+    </div>
+    <div class="field checkbox">
+      <label><input id="sga-checkbox" type="checkbox" onchange="renderContextNotes()" /> SGA history <span class="info-dot" title="Small for gestational age history changes interpretation of early catch-up growth.">i</span></label>
+    </div>
+  </div>
+  <div id="context-note" class="context-note">Optional context appears here after entry.</div>
+
+  <div class="section-title">Parsed FHIR vitals</div>
+  <table id="obs-table" class="data-table">
     <thead>
       <tr>
-        <th>Date</th><th>Measurement</th><th>Value</th><th>Unit</th><th>Percentile</th>
+        <th>Date</th><th>Measurement</th><th>Normalized</th><th>Raw</th><th>Percentile</th><th>FHIR id</th>
       </tr>
     </thead>
     <tbody id="obs-body"></tbody>
   </table>
   <div id="chart-container"><canvas id="growth-chart"></canvas></div>
+  <div class="section-title">Height velocity</div>
+  <table id="velocity-table" class="data-table">
+    <thead>
+      <tr>
+        <th>From</th><th>To</th><th>Interval</th><th>Velocity</th><th>Flag</th>
+      </tr>
+    </thead>
+    <tbody id="velocity-body"></tbody>
+  </table>
+  <div id="velocity-chart-container"><canvas id="velocity-chart"></canvas></div>
+  <div class="section-title">Parsed growth-relevant labs</div>
+  <table id="lab-table" class="data-table">
+    <thead>
+      <tr>
+        <th>Date</th><th>Lab</th><th>Value</th><th>Unit</th><th>Flag</th><th>FHIR id</th>
+      </tr>
+    </thead>
+    <tbody id="lab-body"></tbody>
+  </table>
   <div id="flags"></div>
   <p id="standard-note"></p>
   <div id="summary-section">
@@ -214,6 +325,29 @@
 
   const OPENROUTER_URL   = 'https://openrouter.ai/api/v1/chat/completions';
   const OPENROUTER_MODEL = 'openai/gpt-4o';
+  const ENABLE_LLM_SUMMARY = false;
+
+  const VITAL_CODES = {
+    '8302-2': 'Height',
+    '8306-3': 'Height',
+    '29463-7': 'Weight',
+    '3141-9': 'Weight',
+    '39156-5': 'BMI',
+  };
+  const LAB_CODES = {
+    '3016-3': 'TSH',
+    '4635-9': 'TSH',
+    '14647-5': 'Free T4',
+    '718-7': 'Hemoglobin',
+    '4544-3': 'Hematocrit',
+    '2088-5': 'tTG-IgA',
+    '2154-5': 'Total IgA',
+    '2857-1': 'IGF-1',
+    '2986-8': 'IGF-BP3',
+  };
+
+  let growthChart = null;
+  let velocityChart = null;
 
   // ── WHO boys height 0-24mo ─────────────────────────────────────────────────
   const WHO_BOYS = [
@@ -461,13 +595,10 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     try {
       const ptResp  = await fetch(`${FHIR_BASE}/Patient/${patientId}`, { headers });
       const pt      = await ptResp.json();
-      const obsResp = await fetch(
-        `${FHIR_BASE}/Observation?patient=${patientId}&category=http://terminology.hl7.org/CodeSystem/observation-category|vital-signs&_count=100`,
-        { headers }
-      );
-      const obsBundle = await obsResp.json();
+      const vitalBundle = await fetchObservationsByCodes(patientId, Object.keys(VITAL_CODES), headers);
+      const labBundle   = await fetchObservationsByCodes(patientId, Object.keys(LAB_CODES), headers);
       renderPatient(pt);
-      renderObservations(obsBundle, pt.birthDate, pt.name);
+      renderObservations(vitalBundle, labBundle, pt);
       setStatus('');
     } catch(err) { setStatus('Error: '+err.message); }
   }
@@ -481,93 +612,307 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     document.getElementById('patient-card').style.display = 'block';
   }
 
-  function renderObservations(bundle, dobFHIR, nameFHIR) {
-    const entries = bundle.entry ?? [];
-    const loinc   = { '8302-2':'Height', '29463-7':'Weight', '39156-5':'BMI' };
-    let rows = entries
-      .map(e => e.resource)
-      .filter(o => loinc[o?.code?.coding?.[0]?.code])
-      .sort((a,b) => new Date(a.effectiveDateTime)-new Date(b.effectiveDateTime));
+  async function fetchObservationsByCodes(patientId, codes, headers) {
+    const params = new URLSearchParams({
+      patient: patientId,
+      code: codes.map(c => `http://loinc.org|${c}`).join(','),
+      _sort: 'date',
+      _count: '100',
+    });
+    const firstUrl = `${FHIR_BASE}/Observation?${params.toString()}`;
+    const resources = [];
+    let nextUrl = firstUrl;
 
-    let dob  = dobFHIR;
-    let name = nameFHIR?.[0] ? ([nameFHIR[0].given?.join(' '), nameFHIR[0].family].filter(Boolean).join(' ')) : 'Patient';
-    let usingSynthetic = false;
-
-    if (rows.length === 0) {
-      usingSynthetic = true;
-      dob  = SYNTHETIC_DOB;
-      name = 'Demo Patient';
-      const note = document.createElement('p');
-      note.style.cssText = 'font-size:0.75rem;color:#555;margin-top:0.5rem';
-      note.textContent = 'No vitals in sandbox record — showing synthetic pediatric demo data.';
-      document.getElementById('patient-card').appendChild(note);
-      window._growthData = {
-        height: SYNTHETIC.filter(r=>r.type==='Height').map(r=>({date:r.date,value:r.value,unit:r.unit})),
-        weight: SYNTHETIC.filter(r=>r.type==='Weight').map(r=>({date:r.date,value:r.value,unit:r.unit})),
-        bmi: [],
-      };
-    } else {
-      window._growthData = buildGrowthSeries(rows, loinc);
+    while (nextUrl) {
+      const resp = await fetch(nextUrl, { headers });
+      const bundle = await resp.json();
+      resources.push(...(bundle.entry ?? []).map(e => e.resource));
+      nextUrl = (bundle.link ?? []).find(l => l.relation === 'next')?.url || '';
     }
 
-    const { flags, percentiles } = detectAnomalies(window._growthData.height, dob);
+    return { resourceType: 'Bundle', entry: resources.map(resource => ({ resource })) };
+  }
+
+  function getCodes(obs) {
+    return (obs?.code?.coding ?? []).map(c => c.code).filter(Boolean);
+  }
+
+  function getDisplay(obs) {
+    return obs?.code?.text ||
+      (obs?.code?.coding ?? []).find(c => c.display)?.display ||
+      getCodes(obs)[0] ||
+      '';
+  }
+
+  function getObservationDate(obs) {
+    const raw = obs.effectiveDateTime || obs.effectiveInstant || obs.effectivePeriod?.start || obs.issued || '';
+    return raw ? raw.split('T')[0] : '';
+  }
+
+  function getQuantity(obs) {
+    const q = obs.valueQuantity || {};
+    if (q.value === undefined || q.value === null) return null;
+    return { value: Number(q.value), unit: q.unit || q.code || '' };
+  }
+
+  function toCm(value, unit) {
+    const u = (unit || '').toLowerCase();
+    if (['in', 'inch', 'inches', '[in_i]'].includes(u)) return value * 2.54;
+    return value;
+  }
+
+  function toKg(value, unit) {
+    const u = (unit || '').toLowerCase();
+    if (['lb', 'lbs', 'pound', 'pounds', '[lb_av]'].includes(u)) return value * 0.45359237;
+    return value;
+  }
+
+  function parseVital(obs) {
+    const code = getCodes(obs).find(c => VITAL_CODES[c]);
+    const q = getQuantity(obs);
+    const date = getObservationDate(obs);
+    if (!code || !q || !date) return null;
+    const type = VITAL_CODES[code];
+    let normalizedValue = q.value;
+    let normalizedUnit = q.unit;
+    if (type === 'Height') {
+      normalizedValue = toCm(q.value, q.unit);
+      normalizedUnit = 'cm';
+    } else if (type === 'Weight') {
+      normalizedValue = toKg(q.value, q.unit);
+      normalizedUnit = 'kg';
+    }
+    return {
+      id: obs.id || '',
+      date,
+      type,
+      code,
+      display: getDisplay(obs),
+      value: Number(normalizedValue.toFixed(2)),
+      unit: normalizedUnit,
+      rawValue: q.value,
+      rawUnit: q.unit,
+    };
+  }
+
+  function parseLab(obs) {
+    const code = getCodes(obs).find(c => LAB_CODES[c]);
+    const q = getQuantity(obs);
+    const date = getObservationDate(obs);
+    if (!code || !q || !date) return null;
+    const interpretation = obs.interpretation?.[0]?.coding?.[0]?.code || '';
+    return {
+      id: obs.id || '',
+      date,
+      name: LAB_CODES[code],
+      code,
+      display: getDisplay(obs),
+      value: q.value,
+      unit: q.unit,
+      flag: interpretation,
+    };
+  }
+
+  function renderObservations(vitalBundle, labBundle, patient) {
+    const dob = patient.birthDate || '';
+    const nameFHIR = patient.name;
+    const name = nameFHIR?.[0] ? ([nameFHIR[0].given?.join(' '), nameFHIR[0].family].filter(Boolean).join(' ')) : 'Patient';
+    const vitalRows = (vitalBundle.entry ?? [])
+      .map(e => parseVital(e.resource))
+      .filter(Boolean)
+      .sort((a,b) => new Date(a.date) - new Date(b.date));
+    const labRows = (labBundle.entry ?? [])
+      .map(e => parseLab(e.resource))
+      .filter(Boolean)
+      .sort((a,b) => new Date(b.date) - new Date(a.date));
+
+    window._growthData = buildGrowthSeries(vitalRows);
+
+    const { flags: percentileFlags, percentiles } = dob
+      ? detectAnomalies(window._growthData.height, dob)
+      : { flags: [], percentiles: [] };
+    const velocities = computeVelocities(window._growthData.height);
+    const flags = [...percentileFlags, ...velocityFlags(velocities)];
     const pctMap = {};
     percentiles.forEach(p => { pctMap[p.date] = p.percentile; });
 
-    // store for LLM
-    _payload = { patientName: name, dob, percentiles, weightSeries: window._growthData.weight, flags };
+    _payload = {
+      patientName: name,
+      dob,
+      percentiles,
+      weightSeries: window._growthData.weight,
+      flags,
+    };
 
-    // render table
-    const tbody = document.getElementById('obs-body');
-    tbody.innerHTML = '';
-    const displayRows = usingSynthetic ? SYNTHETIC : rows.map(o => ({
-      date:  o.effectiveDateTime?.split('T')[0],
-      type:  loinc[o.code.coding[0].code],
-      value: o.valueQuantity?.value,
-      unit:  o.valueQuantity?.unit,
-    }));
-    for (const r of displayRows) {
-      const pct       = r.type === 'Height' && pctMap[r.date] !== undefined ? pctMap[r.date]+'th' : '';
-      const isFlagged = flags.some(f=>f.date===r.date) && r.type==='Height';
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value}</td><td>${r.unit}</td>
-        <td style="color:${isFlagged?'#ef4444':'#888'}">${pct}${isFlagged?' ⚠':''}</td>`;
-      tbody.appendChild(tr);
+    renderVitalsTable(vitalRows, pctMap, flags);
+    renderVelocityTable(velocities);
+    renderLabsTable(labRows);
+    renderFlagAlerts(flags);
+    renderContextNotes();
+
+    document.getElementById('standard-note').textContent =
+      'Verification mode: values above are parsed from Epic FHIR Observation resources. Percentiles use this prototype reference table and should be treated as approximate.';
+
+    if (!vitalRows.length) {
+      const flagBox = document.getElementById('flags');
+      const div = document.createElement('div');
+      div.className = 'flag-alert';
+      div.innerHTML = '<strong>No FHIR vitals returned:</strong> Epic auth succeeded, but this sandbox patient did not return height/weight/BMI Observation resources for the requested LOINC codes.';
+      flagBox.appendChild(div);
     }
 
-    // render flag alerts
+    showDebug({
+      patient_id: sessionStorage.getItem('patient_id'),
+      patient_birthDate: dob,
+      parsed_vitals: vitalRows.length,
+      parsed_heights: window._growthData.height.length,
+      parsed_weights: window._growthData.weight.length,
+      parsed_labs: labRows.length,
+      vital_codes_requested: Object.keys(VITAL_CODES),
+      lab_codes_requested: Object.keys(LAB_CODES),
+      note: 'No synthetic fallback is used in this verification build.',
+    });
+
+    renderChart(window._growthData, flags, percentiles);
+    renderVelocityChart(velocities);
+
+    if (ENABLE_LLM_SUMMARY) {
+      const existing = document.getElementById('summary-button');
+      if (!existing) {
+        const summaryBtn = document.createElement('button');
+        summaryBtn.id = 'summary-button';
+        summaryBtn.textContent = 'Generate AI Clinical Summary';
+        summaryBtn.style.cssText = 'margin-top:1.5rem;width:100%;';
+        summaryBtn.onclick = generateSummary;
+        document.getElementById('patient-card').appendChild(summaryBtn);
+      }
+    }
+  }
+
+  function buildGrowthSeries(rows) {
+    const s = { height:[], weight:[], bmi:[] };
+    for (const row of rows) {
+      if (row.type === 'Height') s.height.push(row);
+      if (row.type === 'Weight') s.weight.push(row);
+      if (row.type === 'BMI') s.bmi.push(row);
+    }
+    for (const key of Object.keys(s)) s[key].sort((a,b)=>new Date(a.date)-new Date(b.date));
+    return s;
+  }
+
+  function computeVelocities(heightRows) {
+    const rows = [...heightRows].sort((a,b) => new Date(a.date) - new Date(b.date));
+    const velocities = [];
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1];
+      const curr = rows[i];
+      const deltaYears = (new Date(curr.date) - new Date(prev.date)) / (1000 * 60 * 60 * 24 * 365.25);
+      if (deltaYears <= 0) continue;
+      const cmPerYear = (curr.value - prev.value) / deltaYears;
+      const flags = [];
+      if (deltaYears < 0.25) flags.push('short interval');
+      if (deltaYears > 1.5) flags.push('data gap');
+      if (cmPerYear < 3) flags.push('low velocity / possible artifact');
+      if (cmPerYear > 12) flags.push('high velocity / possible artifact');
+      velocities.push({
+        from: prev.date,
+        to: curr.date,
+        intervalYears: deltaYears,
+        ageDate: curr.date,
+        cmPerYear,
+        flags,
+      });
+    }
+    return velocities;
+  }
+
+  function velocityFlags(velocities) {
+    return velocities
+      .filter(v => v.flags.length)
+      .map(v => ({
+        date: v.to,
+        message: `Height velocity ${v.cmPerYear.toFixed(2)} cm/yr from ${v.from} to ${v.to}: ${v.flags.join(', ')}.`,
+      }));
+  }
+
+  function renderVitalsTable(rows, pctMap, flags) {
+    const tbody = document.getElementById('obs-body');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No height, weight, or BMI observations returned.</td></tr>';
+      return;
+    }
+    for (const r of rows) {
+      const pct = r.type === 'Height' && pctMap[r.date] !== undefined ? pctMap[r.date] + 'th' : '';
+      const isFlagged = flags.some(f => f.date === r.date) && r.type === 'Height';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.date}</td><td>${r.type}</td><td>${r.value} ${r.unit}</td><td>${r.rawValue} ${r.rawUnit}</td>
+        <td style="color:${isFlagged?'#ef4444':'#888'}">${pct}${isFlagged?' !':''}</td><td>${r.id}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderVelocityTable(velocities) {
+    const tbody = document.getElementById('velocity-body');
+    tbody.innerHTML = '';
+    if (!velocities.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-note">At least two height observations are required.</td></tr>';
+      return;
+    }
+    for (const v of velocities) {
+      const flagged = v.flags.length > 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${v.from}</td><td>${v.to}</td><td>${v.intervalYears.toFixed(2)} yr</td>
+        <td style="color:${flagged?'#ef4444':'#7dd3a8'}">${v.cmPerYear.toFixed(2)} cm/yr</td>
+        <td>${v.flags.join(', ') || 'ok'}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderLabsTable(rows) {
+    const tbody = document.getElementById('lab-body');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-note">No growth-relevant lab observations returned.</td></tr>';
+      return;
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.date}</td><td>${r.name}</td><td>${r.value}</td><td>${r.unit}</td><td>${r.flag || ''}</td><td>${r.id}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderFlagAlerts(flags) {
     const flagBox = document.getElementById('flags');
     flagBox.innerHTML = '';
     for (const f of flags) {
       const div = document.createElement('div');
       div.className = 'flag-alert';
-      div.innerHTML = `<strong>⚠ Flagged ${f.date}:</strong> ${f.message}`;
+      div.innerHTML = `<strong>Flagged ${f.date}:</strong> ${f.message}`;
       flagBox.appendChild(div);
     }
-
-    document.getElementById('standard-note').textContent =
-      'Percentiles: WHO standards for ages 0-24 months; CDC 2000 charts for ages 2+.';
-
-    renderChart(window._growthData, flags, percentiles);
-
-    // add button to trigger summary on demand
-const summaryBtn = document.createElement('button');
-summaryBtn.textContent = 'Generate AI Clinical Summary';
-summaryBtn.style.cssText = 'margin-top:1.5rem;width:100%;';
-summaryBtn.onclick = generateSummary;
-document.getElementById('patient-card').appendChild(summaryBtn);
   }
 
-  function buildGrowthSeries(rows, loinc) {
-    const s = { height:[], weight:[], bmi:[] };
-    const k = { '8302-2':'height','29463-7':'weight','39156-5':'bmi' };
-    for (const o of rows) {
-      const key = k[o.code.coding[0].code];
-      if (!key) continue;
-      s[key].push({ date:o.effectiveDateTime?.split('T')[0], value:o.valueQuantity?.value, unit:o.valueQuantity?.unit });
+  function renderContextNotes() {
+    const mother = Number(document.getElementById('mother-height')?.value || 0);
+    const father = Number(document.getElementById('father-height')?.value || 0);
+    const gestAge = Number(document.getElementById('gest-age')?.value || 0);
+    const sga = document.getElementById('sga-checkbox')?.checked;
+    const sex = (document.getElementById('pt-gender')?.textContent || '').toLowerCase();
+    const notes = [];
+
+    if (mother && father) {
+      const isMale = sex.includes('male') && !sex.includes('female');
+      const target = isMale ? (father + mother + 13) / 2 : (father + mother - 13) / 2;
+      notes.push(`Estimated midparental target height: ${target.toFixed(1)} cm.`);
     }
-    for (const key of Object.keys(s)) s[key].sort((a,b)=>new Date(a.date)-new Date(b.date));
-    return s;
+    if (gestAge) notes.push(`Gestational age entered: ${gestAge.toFixed(1)} weeks.`);
+    if (sga) notes.push('SGA history selected; early catch-up growth and measurement reliability should be reviewed.');
+
+    document.getElementById('context-note').textContent = notes.length
+      ? notes.join(' ')
+      : 'Optional parent heights, SGA status, and gestational age can be entered for interpretation only. These values are not written back to Epic.';
   }
 
   function renderChart(growthData, flags, percentiles) {
@@ -577,7 +922,8 @@ document.getElementById('patient-card').appendChild(summaryBtn);
     const wPoints   = growthData.weight.map(d=>({x:d.date,y:d.value}));
     const flagPts   = growthData.height.filter(d=>flagDates.has(d.date)).map(d=>({x:d.date,y:d.value}));
 
-    new Chart(ctx, {
+    if (growthChart) growthChart.destroy();
+    growthChart = new Chart(ctx, {
       type: 'line',
       data: { datasets: [
         { label:'Height (cm)', data:hPoints, borderColor:'#7dd3a8', backgroundColor:'rgba(125,211,168,0.1)', yAxisID:'yH', tension:0.3, pointRadius:5 },
@@ -601,6 +947,29 @@ document.getElementById('patient-card').appendChild(summaryBtn);
           x:{ type:'category', ticks:{color:'#888'}, grid:{color:'#222'} },
           yH:{ type:'linear', position:'left',  ticks:{color:'#7dd3a8'}, grid:{color:'#222'}, title:{display:true,text:'Height (cm)',color:'#7dd3a8'} },
           yW:{ type:'linear', position:'right', ticks:{color:'#f0a868'}, grid:{drawOnChartArea:false}, title:{display:true,text:'Weight (kg)',color:'#f0a868'} },
+        },
+      },
+    });
+  }
+
+  function renderVelocityChart(velocities) {
+    const ctx = document.getElementById('velocity-chart').getContext('2d');
+    const pts = velocities.map(v => ({ x: v.to, y: Number(v.cmPerYear.toFixed(2)) }));
+    const flagged = velocities.filter(v => v.flags.length).map(v => ({ x: v.to, y: Number(v.cmPerYear.toFixed(2)) }));
+
+    if (velocityChart) velocityChart.destroy();
+    velocityChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [
+        { label:'Height velocity (cm/yr)', data:pts, borderColor:'#7dd3a8', backgroundColor:'rgba(125,211,168,0.1)', tension:0.25, pointRadius:5 },
+        { label:'Flagged interval', data:flagged, borderColor:'transparent', backgroundColor:'#ef4444', type:'scatter', pointRadius:8, pointStyle:'triangle', showLine:false },
+      ]},
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ labels:{ color:'#ccc' } } },
+        scales:{
+          x:{ type:'category', ticks:{color:'#888'}, grid:{color:'#222'} },
+          y:{ ticks:{color:'#7dd3a8'}, grid:{color:'#222'}, title:{display:true,text:'cm/year',color:'#7dd3a8'} },
         },
       },
     });
