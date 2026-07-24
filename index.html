@@ -34,6 +34,24 @@
       cursor: pointer;
     }
     button:hover { background: #5bb890; }
+    .action-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 1.5rem;
+    }
+    .action-row button {
+      margin-top: 0;
+    }
+    button.secondary {
+      background: #222;
+      color: #7dd3a8;
+      border: 1px solid #3a3a3a;
+    }
+    button.secondary:hover {
+      background: #2a2a2a;
+    }
     #status { margin-top: 1rem; font-size: 0.85rem; color: #888; }
     #debug {
       margin-top: 2rem;
@@ -242,8 +260,11 @@
 <body>
 
 <h1>GrowthRadar Lite</h1>
-<p>Pediatric growth monitoring via Epic FHIR</p>
-<button onclick="startLaunch()">Connect to Epic Sandbox</button>
+<p>Pediatric growth monitoring via Epic FHIR or local sample data</p>
+<div class="action-row">
+  <button onclick="startLaunch()">Connect to Epic Sandbox</button>
+  <button class="secondary" onclick="loadSamplePatient()">Use sample pediatric data</button>
+</div>
 <div id="status"></div>
 
 <div id="patient-card">
@@ -271,7 +292,7 @@
   </div>
   <div id="context-note" class="context-note">Optional context appears here after entry.</div>
 
-  <div class="section-title">Parsed FHIR vitals</div>
+  <div class="section-title">Parsed vitals</div>
   <div class="table-wrap">
     <table id="obs-table" class="data-table">
       <thead>
@@ -295,7 +316,7 @@
     </table>
   </div>
   <div id="velocity-chart-container"><canvas id="velocity-chart"></canvas></div>
-  <div class="section-title">Parsed FHIR labs</div>
+  <div class="section-title">Parsed labs</div>
   <div class="table-wrap">
     <table id="lab-table" class="data-table">
       <thead>
@@ -306,7 +327,7 @@
       <tbody id="lab-body"></tbody>
     </table>
   </div>
-  <div class="section-title">Parsed FHIR medications</div>
+  <div class="section-title">Parsed medications</div>
   <div class="table-wrap">
     <table id="med-table" class="data-table">
       <thead>
@@ -317,7 +338,7 @@
       <tbody id="med-body"></tbody>
     </table>
   </div>
-  <div class="section-title">Parsed FHIR conditions</div>
+  <div class="section-title">Parsed conditions</div>
   <div class="table-wrap">
     <table id="condition-table" class="data-table">
       <thead>
@@ -427,6 +448,18 @@
     { date: '2024-03-15', type: 'Weight', value: 15.9,  unit: 'kg' },
     { date: '2024-09-15', type: 'Height', value: 108.1, unit: 'cm' },
     { date: '2024-09-15', type: 'Weight', value: 17.2,  unit: 'kg' },
+  ];
+
+  const SAMPLE_LABS = [
+    { date: '2024-09-15', name: 'TSH', value: 2.1, unit: 'mIU/L', flag: '' },
+    { date: '2024-09-15', name: 'Hemoglobin', value: 12.4, unit: 'g/dL', flag: '' },
+    { date: '2024-09-15', name: 'tTG-IgA', value: 1.0, unit: 'U/mL', flag: '' },
+  ];
+  const SAMPLE_MEDS = [
+    { status: 'active', name: 'No active medications documented', date: '2024-09-15' },
+  ];
+  const SAMPLE_CONDITIONS = [
+    { status: 'active', name: 'Growth deceleration - sample problem list item', date: '2024-09-15' },
   ];
 
   // ── Percentile helpers ─────────────────────────────────────────────────────
@@ -649,6 +682,100 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     } catch(err) { setStatus('Error: '+err.message); }
   }
 
+  function makeBundle(resources) {
+    return {
+      resourceType: 'Bundle',
+      entry: resources.map(resource => ({ resource })),
+    };
+  }
+
+  function sampleObservation(row, index) {
+    const isHeight = row.type === 'Height';
+    const isWeight = row.type === 'Weight';
+    const code = isHeight ? '8302-2' : (isWeight ? '29463-7' : '39156-5');
+    return {
+      resourceType: 'Observation',
+      id: `sample-${row.type.toLowerCase()}-${index}`,
+      status: 'final',
+      code: {
+        coding: [{
+          system: 'http://loinc.org',
+          code,
+          display: row.type,
+        }],
+        text: row.type,
+      },
+      effectiveDateTime: row.date,
+      valueQuantity: {
+        value: row.value,
+        unit: row.unit,
+      },
+    };
+  }
+
+  function sampleLabObservation(row, index) {
+    return {
+      resourceType: 'Observation',
+      id: `sample-lab-${index}`,
+      status: 'final',
+      category: [{
+        coding: [{
+          system: 'http://terminology.hl7.org/CodeSystem/observation-category',
+          code: 'laboratory',
+          display: 'Laboratory',
+        }],
+      }],
+      code: { text: row.name },
+      effectiveDateTime: row.date,
+      valueQuantity: {
+        value: row.value,
+        unit: row.unit,
+      },
+      interpretation: row.flag ? [{ coding: [{ code: row.flag }] }] : [],
+    };
+  }
+
+  function sampleMedication(row, index) {
+    return {
+      resourceType: 'MedicationRequest',
+      id: `sample-med-${index}`,
+      status: row.status,
+      authoredOn: row.date,
+      medicationCodeableConcept: { text: row.name },
+    };
+  }
+
+  function sampleCondition(row, index) {
+    return {
+      resourceType: 'Condition',
+      id: `sample-condition-${index}`,
+      recordedDate: row.date,
+      clinicalStatus: { coding: [{ code: row.status }] },
+      code: { text: row.name },
+    };
+  }
+
+  function loadSamplePatient() {
+    setStatus('');
+    const patient = {
+      id: 'sample-pediatric-growth',
+      birthDate: SYNTHETIC_DOB,
+      gender: 'male',
+      name: [{ given: ['Sample'], family: 'Pediatric Patient' }],
+    };
+    const vitalBundle = makeBundle(SYNTHETIC.map(sampleObservation));
+    const labBundle = makeBundle(SAMPLE_LABS.map(sampleLabObservation));
+    const medBundle = makeBundle(SAMPLE_MEDS.map(sampleMedication));
+    const condBundle = makeBundle(SAMPLE_CONDITIONS.map(sampleCondition));
+
+    renderPatient(patient);
+    renderObservations(vitalBundle, labBundle, medBundle, condBundle, patient, {
+      source: 'Local sample pediatric data',
+      patientId: patient.id,
+      noEpicLogin: true,
+    });
+  }
+
   function renderPatient(pt) {
     const n = pt.name?.[0];
     const fullName = ([n?.given?.join(' '), n?.family].filter(Boolean).join(' ')) || 'Unknown Patient';
@@ -834,8 +961,9 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     };
   }
 
-  function renderObservations(vitalBundle, labBundle, medBundle, condBundle, patient) {
+  function renderObservations(vitalBundle, labBundle, medBundle, condBundle, patient, options = {}) {
     currentPatient = patient;
+    const source = options.source || 'Epic FHIR';
     const dob = patient.birthDate || '';
     const nameFHIR = patient.name;
     const name = nameFHIR?.[0] ? ([nameFHIR[0].given?.join(' '), nameFHIR[0].family].filter(Boolean).join(' ')) : 'Patient';
@@ -885,8 +1013,8 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
 
     document.getElementById('standard-note').textContent =
       pediatric
-        ? 'Verification mode: values above are parsed from Epic FHIR resources. Percentiles use this prototype pediatric reference table and should be treated as approximate.'
-        : 'Verification mode: values above are parsed from Epic FHIR resources. This sandbox patient is not pediatric, so pediatric percentiles and height velocity calculations are intentionally suppressed.';
+        ? `${source}: values above are parsed through the same Observation/Medication/Condition pipeline used for Epic. Percentiles use this prototype pediatric reference table and should be treated as approximate.`
+        : `${source}: this patient is not pediatric, so pediatric percentiles and height velocity calculations are intentionally suppressed.`;
 
     if (!vitalRows.length) {
       const flagBox = document.getElementById('flags');
@@ -897,7 +1025,9 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     }
 
     showDebug({
-      patient_id: sessionStorage.getItem('patient_id'),
+      source,
+      no_epic_login: Boolean(options.noEpicLogin),
+      patient_id: options.patientId || sessionStorage.getItem('patient_id'),
       patient_birthDate: dob,
       parsed_vitals: vitalRows.length,
       parsed_heights: window._growthData.height.length,
@@ -908,7 +1038,9 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
       vital_codes_requested: Object.keys(VITAL_CODES),
       lab_category_requested: 'laboratory',
       pediatric_growth_calculations_enabled: pediatric,
-      note: 'No synthetic fallback is used in this verification build.',
+      note: options.noEpicLogin
+        ? 'Loaded local sample data; no Epic login or network token was used.'
+        : 'No synthetic fallback is used for Epic verification.',
     });
 
     renderChart(window._growthData, flags, percentiles);
@@ -1185,7 +1317,13 @@ Write a concise clinical summary (3-5 sentences) for a pediatrician. Describe th
     });
   }
 
-  handleCallback();
+  const initialParams = new URLSearchParams(window.location.search);
+  if (initialParams.get('demo') === '1') {
+    window.history.replaceState({}, document.title, REDIRECT_URI);
+    loadSamplePatient();
+  } else {
+    handleCallback();
+  }
 </script>
 </body>
 </html>
